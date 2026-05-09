@@ -1,0 +1,349 @@
+// ============================================================
+// ECOMMERCE — Prisma Schema
+// Database: PostgreSQL (users, orders, payments, inductees)
+// Run: npx prisma migrate dev --name init
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum Role {
+  CUSTOMER
+  ARCHITECT
+  ADMIN
+}
+
+enum InducteeLevel {
+  NONE
+  PHASE_HOLDER     // owns 1 phase
+  DOUBLE_AGENT     // owns 2+ phases
+  THE_ESCAPED      // owns 4+ phases + active status
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+  REFUNDED
+}
+
+enum PaymentProvider {
+  JAZZCASH
+  EASYPAISA
+  STRIPE
+  COD
+}
+
+enum PhaseStatus {
+  LOCKED
+  LIVE
+  ARCHIVED
+}
+
+enum SvobodaStatus {
+  PENDING    // nominated but not confirmed
+  AWARDED    // garment sent
+}
+
+// ============================================================
+// USER
+// ============================================================
+
+model User {
+  id            String        @id @default(cuid())
+  name          String
+  email         String        @unique
+  passwordHash  String
+  phone         String?       @unique
+  role          Role          @default(CUSTOMER)
+  inducteeLevel InducteeLevel @default(NONE)
+  isActive      Boolean       @default(true)
+
+  // Relations
+  orders        Order[]
+  addresses     Address[]
+  sessions      Session[]
+  svobodaAward  SvobodaAward?
+  architectNote ArchitectNote?
+  waitlistEntry WaitlistEntry[]
+
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  @@index([email])
+  @@index([role])
+  @@map("users")
+}
+
+// ============================================================
+// SESSION (JWT refresh token tracking)
+// ============================================================
+
+model Session {
+  id           String   @id @default(cuid())
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshToken String   @unique
+  userAgent    String?
+  ipAddress    String?
+  expiresAt    DateTime
+  createdAt    DateTime @default(now())
+
+  @@index([userId])
+  @@index([refreshToken])
+  @@map("sessions")
+}
+
+// ============================================================
+// ADDRESS
+// ============================================================
+
+model Address {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  fullName   String
+  phone      String
+  line1      String
+  line2      String?
+  city       String
+  province   String
+  postalCode String?
+  isDefault  Boolean  @default(false)
+  orders     Order[]
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([userId])
+  @@map("addresses")
+}
+
+// ============================================================
+// PHASE (mirrored from MongoDB for relational integrity)
+// Each phase has a mongoId linking to the MongoDB document
+// for full content (products, manifesto text, palette, etc.)
+// ============================================================
+
+model Phase {
+  id          String      @id @default(cuid())
+  mongoId     String      @unique   // reference to MongoDB Phase doc
+  number      Int         @unique   // 1–5
+  name        String                // FREEDOM, THE FRACTURE, etc.
+  slug        String      @unique   // freedom, the-fracture, etc.
+  status      PhaseStatus @default(LOCKED)
+  unitsTotal  Int?
+  unitsSold   Int         @default(0)
+  dropDate    DateTime?
+  archiveDate DateTime?
+
+  // Relations
+  orderItems  OrderItem[]
+  waitlist    WaitlistEntry[]
+
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@index([status])
+  @@index([slug])
+  @@map("phases")
+}
+
+// ============================================================
+// ORDER
+// ============================================================
+
+model Order {
+  id              String      @id @default(cuid())
+  orderNumber     String      @unique @default(cuid()) // human-readable ref
+  userId          String
+  user            User        @relation(fields: [userId], references: [id])
+  addressId       String
+  address         Address     @relation(fields: [addressId], references: [id])
+  status          OrderStatus @default(PENDING)
+
+  // Pricing (stored in PKR paisas to avoid float issues)
+  subtotalPaisas  Int
+  shippingPaisas  Int         @default(0)
+  discountPaisas  Int         @default(0)
+  totalPaisas     Int
+
+  notes           String?     // customer note at checkout
+
+  // Relations
+  items           OrderItem[]
+  payment         Payment?
+
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([userId])
+  @@index([status])
+  @@index([orderNumber])
+  @@map("orders")
+}
+
+// ============================================================
+// ORDER ITEM
+// ============================================================
+
+model OrderItem {
+  id          String  @id @default(cuid())
+  orderId     String
+  order       Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  phaseId     String
+  phase       Phase   @relation(fields: [phaseId], references: [id])
+
+  // Snapshot of product at time of purchase (MongoDB data may change)
+  mongoProductId  String          // MongoDB product _id
+  productName     String
+  productSku      String
+  size            String          // XS / S / M / L / XL / XXL
+  pricePaisas     Int             // price at purchase time
+  quantity        Int             @default(1)
+  isGhost         Boolean         @default(false) // СВОБОДА / special variant
+
+  @@index([orderId])
+  @@index([phaseId])
+  @@map("order_items")
+}
+
+// ============================================================
+// PAYMENT
+// ============================================================
+
+model Payment {
+  id                String          @id @default(cuid())
+  orderId           String          @unique
+  order             Order           @relation(fields: [orderId], references: [id])
+  provider          PaymentProvider
+  status            PaymentStatus   @default(PENDING)
+  amountPaisas      Int
+  currency          String          @default("PKR")
+
+  // Provider-specific references
+  providerTxnId     String?         // JazzCash / Easypaisa / Stripe txn ID
+  providerRef       String?         // any secondary ref / PP number
+  providerResponse  Json?           // raw webhook payload stored for audit
+
+  paidAt            DateTime?
+  failedAt          DateTime?
+  refundedAt        DateTime?
+
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@index([orderId])
+  @@index([status])
+  @@index([providerTxnId])
+  @@map("payments")
+}
+
+// ============================================================
+// INDUCTEE SYSTEM
+// ============================================================
+
+// Tracks which phases a user owns (for level calculation)
+model UserPhaseOwnership {
+  id        String   @id @default(cuid())
+  userId    String
+  phaseId   String
+  orderId   String   // which order granted this ownership
+  grantedAt DateTime @default(now())
+
+  @@unique([userId, phaseId])
+  @@index([userId])
+  @@map("user_phase_ownerships")
+}
+
+// ============================================================
+// СВОБОДА (SVOBODA) AWARD
+// The un-sellable inner-circle garment — awarded, never sold
+// ============================================================
+
+model SvobodaAward {
+  id              String        @id @default(cuid())
+  userId          String        @unique
+  user            User          @relation(fields: [userId], references: [id])
+  status          SvobodaStatus @default(PENDING)
+  nominationNote  String        // why they were chosen (founder's note)
+  voiceNoteUrl    String?       // Cloudinary URL of their submission
+  awardedAt       DateTime?
+  shippedAt       DateTime?
+  trackingRef     String?
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@map("svoboda_awards")
+}
+
+// ============================================================
+// ARCHITECT (top-tier brand rep — secretly nominated)
+// ============================================================
+
+model ArchitectNote {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  user          User     @relation(fields: [userId], references: [id])
+  nominatedAt   DateTime @default(now())
+  nominatedBy   String   // admin user ID who nominated them
+  internalNote  String   // why they were chosen
+  isActive      Boolean  @default(true)
+
+  @@map("architect_notes")
+}
+
+// ============================================================
+// WAITLIST (for users who missed a phase drop)
+// ============================================================
+
+model WaitlistEntry {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  phaseId   String
+  phase     Phase    @relation(fields: [phaseId], references: [id])
+  notified  Boolean  @default(false)
+  joinedAt  DateTime @default(now())
+
+  @@unique([userId, phaseId])
+  @@index([phaseId])
+  @@map("waitlist_entries")
+}
+
+// ============================================================
+// TRANSMISSION CARD LOG
+// Tracks who texted the WhatsApp number on the physical card
+// ============================================================
+
+model TransmissionCardScan {
+  id          String   @id @default(cuid())
+  phone       String
+  orderId     String?  // linked order if found
+  addedToVip  Boolean  @default(false) // added to Close Friends list
+  scannedAt   DateTime @default(now())
+
+  @@index([phone])
+  @@map("transmission_card_scans")
+}
