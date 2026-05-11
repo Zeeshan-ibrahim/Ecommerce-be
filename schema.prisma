@@ -10,7 +10,6 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
 }
 
 // ============================================================
@@ -83,9 +82,7 @@ model User {
   orders        Order[]
   addresses     Address[]
   sessions      Session[]
-  svobodaAward  SvobodaAward?
-  architectNote ArchitectNote?
-  waitlistEntry WaitlistEntry[]
+  wishlists Wishlist[]
 
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
@@ -140,34 +137,31 @@ model Address {
 }
 
 // ============================================================
-// PHASE (mirrored from MongoDB for relational integrity)
-// Each phase has a mongoId linking to the MongoDB document
-// for full content (products, manifesto text, palette, etc.)
+// CATEGORY
 // ============================================================
-
-model Phase {
+model Category {
   id          String      @id @default(cuid())
-  mongoId     String      @unique   // reference to MongoDB Phase doc
-  number      Int         @unique   // 1–5
-  name        String                // FREEDOM, THE FRACTURE, etc.
-  slug        String      @unique   // freedom, the-fracture, etc.
-  status      PhaseStatus @default(LOCKED)
-  unitsTotal  Int?
-  unitsSold   Int         @default(0)
-  dropDate    DateTime?
-  archiveDate DateTime?
+  name        String
+  slug        String      @unique
+  description String?
+
+  // Hierarchy
+  parentId    String?
+  parent      Category?   @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children    Category[]  @relation("CategoryHierarchy")
 
   // Relations
-  orderItems  OrderItem[]
-  waitlist    WaitlistEntry[]
+  products    Product[]
 
+  isActive    Boolean     @default(true)
   createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
 
-  @@index([status])
   @@index([slug])
-  @@map("phases")
+  @@index([parentId])
+  @@map("categories")
 }
+
+
 
 // ============================================================
 // ORDER
@@ -183,10 +177,10 @@ model Order {
   status          OrderStatus @default(PENDING)
 
   // Pricing (stored in PKR paisas to avoid float issues)
-  subtotalPaisas  Int
-  shippingPaisas  Int         @default(0)
-  discountPaisas  Int         @default(0)
-  totalPaisas     Int
+  subtotal  Int
+  shipping  Int         @default(0)
+  discount  Int         @default(0)
+  total     Int
 
   notes           String?     // customer note at checkout
 
@@ -203,29 +197,194 @@ model Order {
   @@map("orders")
 }
 
+
+// ============================================================
+// PRODUCT
+// ============================================================
+
+model Product {
+  id              String      @id @default(cuid())
+
+  name            String
+  slug            String      @unique
+  description     String?
+
+  sku             String      @unique
+
+  pricePaisas     Int
+  comparePrice    Int?
+
+  categoryId      String
+  category        Category    @relation(fields: [categoryId], references: [id])
+
+  brand           String?
+
+  isActive        Boolean     @default(true)
+  isFeatured      Boolean     @default(false)
+
+  tags            String[]
+
+  // SEO
+  metaTitle       String?
+  metaDescription String?
+
+  // Relations
+  variants ProductVariant[]
+  images   ProductImage[]
+  orderItems OrderItem[]
+  wishlists Wishlist[]
+
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  @@index([slug])
+  @@index([categoryId])
+  @@index([isFeatured])
+  @@map("products")
+}
+
+// ============================================================
+// PRODUCT VARIANT
+// ============================================================
+model ProductVariant {
+  id            String   @id @default(cuid())
+
+  productId     String
+  product       Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  size          String
+  color         String?
+
+  sku           String   @unique
+
+  stock         Int      @default(0)
+
+  additionalPrice Int    @default(0)
+
+  isActive      Boolean  @default(true)
+
+  orderItems    OrderItem[]
+  inventoryLogs InventoryLog[]
+
+  createdAt     DateTime @default(now())
+
+  @@index([productId])
+  @@index([size])
+  @@index([color])
+  @@map("product_variants")
+}
+
+// ============================================================
+// PRODUCT IMAGES
+// ============================================================
+model ProductImage {
+  id          String    @id @default(cuid())
+
+  productId   String
+  product     Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  url         String
+  alt         String?
+
+  sortOrder   Int       @default(0)
+  isPrimary   Boolean   @default(false)
+
+  createdAt   DateTime  @default(now())
+
+  @@index([productId])
+  @@map("product_images")
+}
+
+
 // ============================================================
 // ORDER ITEM
 // ============================================================
 
 model OrderItem {
-  id          String  @id @default(cuid())
-  orderId     String
-  order       Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  phaseId     String
-  phase       Phase   @relation(fields: [phaseId], references: [id])
+  id               String           @id @default(cuid())
 
-  // Snapshot of product at time of purchase (MongoDB data may change)
-  mongoProductId  String          // MongoDB product _id
-  productName     String
-  productSku      String
-  size            String          // XS / S / M / L / XL / XXL
-  pricePaisas     Int             // price at purchase time
-  quantity        Int             @default(1)
-  isGhost         Boolean         @default(false) // СВОБОДА / special variant
+  orderId          String
+  order            Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  productId        String
+  product          Product          @relation(fields: [productId], references: [id])
+
+  variantId        String?
+  variant          ProductVariant?  @relation(fields: [variantId], references: [id])
+
+  productName      String
+  productSku       String
+
+  size             String?
+  color            String?
+
+  pricePaisas      Int
+
+  quantity         Int              @default(1)
 
   @@index([orderId])
-  @@index([phaseId])
+  @@index([productId])
+  @@index([variantId])
+
   @@map("order_items")
+}
+
+// ============================================================
+// INVENTORY LOG
+// ============================================================
+model InventoryLog {
+  id            String   @id @default(cuid())
+
+  variantId     String
+  variant       ProductVariant @relation(fields: [variantId], references: [id])
+
+  previousStock Int
+  newStock      Int
+
+  reason        String
+
+  createdAt     DateTime @default(now())
+
+  @@index([variantId])
+}
+
+
+// ============================================================
+// COUPON
+// ============================================================
+model Coupon {
+  id            String   @id @default(cuid())
+
+  code          String   @unique
+
+  percentageOff Int?
+  fixedOff      Int?
+
+  maxUses       Int?
+  usedCount     Int      @default(0)
+
+  expiresAt     DateTime?
+
+  isActive      Boolean  @default(true)
+
+  createdAt     DateTime @default(now())
+}
+
+// ============================================================
+// WISHLIST
+// ============================================================
+model Wishlist {
+  id          String   @id @default(cuid())
+
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  productId   String
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  createdAt   DateTime @default(now())
+
+  @@unique([userId, productId])
 }
 
 // ============================================================
@@ -257,93 +416,4 @@ model Payment {
   @@index([status])
   @@index([providerTxnId])
   @@map("payments")
-}
-
-// ============================================================
-// INDUCTEE SYSTEM
-// ============================================================
-
-// Tracks which phases a user owns (for level calculation)
-model UserPhaseOwnership {
-  id        String   @id @default(cuid())
-  userId    String
-  phaseId   String
-  orderId   String   // which order granted this ownership
-  grantedAt DateTime @default(now())
-
-  @@unique([userId, phaseId])
-  @@index([userId])
-  @@map("user_phase_ownerships")
-}
-
-// ============================================================
-// СВОБОДА (SVOBODA) AWARD
-// The un-sellable inner-circle garment — awarded, never sold
-// ============================================================
-
-model SvobodaAward {
-  id              String        @id @default(cuid())
-  userId          String        @unique
-  user            User          @relation(fields: [userId], references: [id])
-  status          SvobodaStatus @default(PENDING)
-  nominationNote  String        // why they were chosen (founder's note)
-  voiceNoteUrl    String?       // Cloudinary URL of their submission
-  awardedAt       DateTime?
-  shippedAt       DateTime?
-  trackingRef     String?
-
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
-
-  @@map("svoboda_awards")
-}
-
-// ============================================================
-// ARCHITECT (top-tier brand rep — secretly nominated)
-// ============================================================
-
-model ArchitectNote {
-  id            String   @id @default(cuid())
-  userId        String   @unique
-  user          User     @relation(fields: [userId], references: [id])
-  nominatedAt   DateTime @default(now())
-  nominatedBy   String   // admin user ID who nominated them
-  internalNote  String   // why they were chosen
-  isActive      Boolean  @default(true)
-
-  @@map("architect_notes")
-}
-
-// ============================================================
-// WAITLIST (for users who missed a phase drop)
-// ============================================================
-
-model WaitlistEntry {
-  id        String   @id @default(cuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  phaseId   String
-  phase     Phase    @relation(fields: [phaseId], references: [id])
-  notified  Boolean  @default(false)
-  joinedAt  DateTime @default(now())
-
-  @@unique([userId, phaseId])
-  @@index([phaseId])
-  @@map("waitlist_entries")
-}
-
-// ============================================================
-// TRANSMISSION CARD LOG
-// Tracks who texted the WhatsApp number on the physical card
-// ============================================================
-
-model TransmissionCardScan {
-  id          String   @id @default(cuid())
-  phone       String
-  orderId     String?  // linked order if found
-  addedToVip  Boolean  @default(false) // added to Close Friends list
-  scannedAt   DateTime @default(now())
-
-  @@index([phone])
-  @@map("transmission_card_scans")
 }
