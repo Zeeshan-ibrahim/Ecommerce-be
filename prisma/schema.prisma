@@ -10,6 +10,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 // ============================================================
@@ -63,6 +64,18 @@ enum SvobodaStatus {
   PENDING    // nominated but not confirmed
   AWARDED    // garment sent
 }
+
+// ============================================================
+// Waitlist
+// ============================================================
+model Waitlist{
+  id    String        @id @default(cuid())
+  name   String
+  email   String        @unique
+
+  createdAt DateTime      @default(now())
+}
+
 
 // ============================================================
 // USER
