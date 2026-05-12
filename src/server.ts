@@ -1,6 +1,7 @@
 import express from "express";
 import router from "./routes";
 import "dotenv/config";
+import authRoutes from "./routes/auth";
 
 const app = express();
 
@@ -11,6 +12,7 @@ app.use(express.json());
 
 // routes
 app.use("/", router);
+app.use("/api/auth", authRoutes);
 
 // start server
 const server = app.listen(PORT, () => {
