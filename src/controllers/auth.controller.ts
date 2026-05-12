@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import bcrypt from "bcryptjs";
 
 import prisma from "../config/prisma";
+import { generateAccessToken, generateRefreshToken } from "../utils/tokens";
 
 export const register = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -74,27 +75,76 @@ export const register = async (req: Request, res: Response): Promise<void> => {
   }
 };
 
-// Generate tokens
-// const accessToken = generateAccessToken(user);
-// const refreshToken = generateRefreshToken(user);
 
-// Save session
-// await prisma.session.create({
-//   data: {
-//     userId: user.id,
-//     refreshToken,
-//     userAgent: req.headers["user-agent"],
-//     ipAddress: req.ip,
-//     expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
-//   },
-// });
+export const login = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email, password } = req.body;
 
-//   data: {
-//     user: {
-//       name: user.name,
-//       email: user.email,
-//     },
+    if (!email || !password) {
+      res.status(400).json({
+        success: false,
+        message: "Email and password are required",
+      });
 
-//     accessToken,
-//     refreshToken,
-//   },
+      return;
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (!user) {
+      res.status(401).json({
+        success: false,
+        message: "User does not exist with this email.",
+      });
+
+      return;
+    }
+
+    const passwordValid = await bcrypt.compare(password, user.passwordHash);
+
+    if (!passwordValid) {
+      res.status(401).json({
+        success: false,
+        message: "Invalid password.",
+      });
+
+      return;
+    }
+
+    const accessToken = generateAccessToken(user);
+    const refreshToken = generateRefreshToken(user);
+
+    await prisma.session.create({
+      data: {
+        userId: user.id,
+        refreshToken,
+        userAgent: req.headers["user-agent"] as string | undefined,
+        ipAddress: req.ip,
+        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+      },
+    });
+
+    res.status(200).json({
+      success: true,
+      data: {
+        user: {
+          name: user.name,
+          email: user.email,
+        },
+        accessToken,
+        refreshToken,
+      },
+    });
+  } catch (error) {
+    
+    console.error(error);
+
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
+
