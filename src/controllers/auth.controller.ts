@@ -3,6 +3,11 @@ import bcrypt from "bcryptjs";
 
 import prisma from "../config/prisma";
 import { generateAccessToken, generateRefreshToken } from "../utils/tokens";
+import {
+  getBearerToken,
+  getUserInfo,
+  validateAuthToken,
+} from "@/utils/user";
 
 export const register = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -148,3 +153,44 @@ export const login = async (req: Request, res: Response): Promise<void> => {
   }
 };
 
+export const logout = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const refreshToken = getBearerToken(req.headers);
+
+    if (!refreshToken || !(await validateAuthToken(req.headers))) {
+      res.status(401).json({
+        success: false,
+        message: "Invalid or missing refresh token",
+      });
+      return;
+    }
+
+    const parsed = getUserInfo(refreshToken);
+    if (!parsed) {
+      res.status(401).json({
+        success: false,
+        message: "Invalid token",
+      });
+      return;
+    }
+
+    await prisma.session.deleteMany({
+      where: {
+        refreshToken,
+        userId: parsed.user.id,
+      },
+    });
+
+    res.status(200).json({
+      success: true,
+      message: "Logout successful",
+    });
+  } catch (error) {
+    console.error(error);
+
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  }
+};
