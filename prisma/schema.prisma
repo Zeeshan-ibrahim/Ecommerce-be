@@ -150,7 +150,7 @@ model Address {
 }
 
 // ============================================================
-// CATEGORY
+// CATEGORY  need to update this table - cuid and parentid (no need for self relation)
 // ============================================================
 model Category {
   id          String      @id @default(cuid())
