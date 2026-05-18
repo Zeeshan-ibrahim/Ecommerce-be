@@ -1,11 +1,14 @@
 {
-    "compilerOptions": {
-      "ignoreDeprecations": "6.0",
-      "baseUrl": "./src",
-      "paths": {
-            "@/*": ["*"]
-        },
+  "compilerOptions": {
+    "ignoreDeprecations": "5.0",
+    "baseUrl": "./src",
+    "paths": {
+      "@/*": ["*"]
+    },
     "esModuleInterop": true,
-    "allowSyntheticDefaultImports": true
-    }
-  }
+    "allowSyntheticDefaultImports": true,
+    "outDir": "./dist",
+    "rootDir": "./src"
+  },
+  "include": ["src/**/*.ts"]
+}
